@@ -87,6 +87,8 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.target }}-
 
       - name: Build release binary
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: |
           export ${{ matrix.linker_env }}=${{ matrix.linker }}
           cargo build --release --target ${{ matrix.target }}
@@ -97,9 +99,14 @@ jobs:
           BIN: badvpn-udpgw-linux-${{ matrix.arch }}
         run: |
           cp target/${{ matrix.target }}/release/badvpn-udpgw "$BIN"
-          ./"$BIN" --version
           tar -czf "$BIN.tar.gz" "$BIN" badvpn-udpgw.service README.md
           sha256sum "$BIN" "$BIN.tar.gz" > SHA256SUMS-${{ matrix.arch }}.txt
+
+      - name: Smoke test native binary
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        env:
+          BIN: badvpn-udpgw-linux-${{ matrix.arch }}
+        run: ./"$BIN" --version
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
