@@ -399,20 +399,33 @@ pub async fn handle_client(
                         payload.len(),
                         entry.remote_addr
                     );
-                    // Non-blocking UDP send: never stall the client's TCP reader on UDP congestion.
-                    match entry.socket.try_send_to(payload, entry.remote_addr) {
-                        Ok(_) => {}
+                    // Fast-path non-blocking send; on WouldBlock (including fresh Tokio sockets
+                    // whose readiness bit is not yet initialized), fall back to a bounded send_to.
+                    let send_res = match entry.socket.try_send_to(payload, entry.remote_addr) {
+                        Ok(n) => Ok(Ok(n)),
                         Err(ref e)
                             if e.kind() == io::ErrorKind::WouldBlock
                                 || e.kind() == io::ErrorKind::Interrupted =>
                         {
+                            timeout(
+                                Duration::from_millis(50),
+                                entry.socket.send_to(payload, entry.remote_addr),
+                            )
+                            .await
+                        }
+                        Err(e) => Ok(Err(e)),
+                    };
+
+                    match send_res {
+                        Ok(Ok(_)) => {}
+                        Err(_) => {
                             log_warn!(
                                 "client ({}): connection {}: out of UDP send buffer, dropping packet",
                                 peer_addr,
                                 conid
                             );
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             log_info!(
                                 "client ({}): connection {}: UDP send error: {}",
                                 peer_addr,
